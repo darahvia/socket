@@ -1,6 +1,7 @@
 import socket
 import threading
 import crc
+import random
 
 #Set Socket
 server = socket.socket()
@@ -13,17 +14,26 @@ print(f"Server has started on address: {ip} and port: {port}")
 # list to store clients and their names
 clients = []
 client_names=[]
+last_broadcast_message = ""
+last_broadcast_sender = None
 
 # function to broadcast messages to all clients (send message to all clients except the sender)
-def broadcast(message, sender_socket):
-    packet = crc.create_packet(message) # create CRC packet
+def broadcast(message, sender_socket, is_error_msg=False):
+    # 10% error simulation (but not for error messages)
+    if not is_error_msg and random.random() < 0.1:
+        packet = crc.create_packet(message)
+        packet_str = packet.decode()
+        # Corrupt by changing one character in CRC
+        parts = packet_str.split('|')
+        if len(parts[1]) > 0:
+            corrupted_crc = parts[1][:-1] + ('1' if parts[1][-1] == '0' else '0')
+            packet = (parts[0] + '|' + corrupted_crc).encode()
+    else:
+        packet = crc.create_packet(message)
+
     for client in clients:
         if client != sender_socket:
-            try:
                 client.send(packet)
-            except socket.error:
-                # remove disconnected client
-                remove_client(client)
 
 # function to remove client
 def remove_client(client_socket):
@@ -36,6 +46,7 @@ def remove_client(client_socket):
 		client_socket.close()  
 
 def handle_client(c_socket, c_address):
+    global last_broadcast_message, last_broadcast_sender
     try:
         c_name = c_socket.recv(1024).decode()
         client_names.append(c_name)
@@ -48,21 +59,37 @@ def handle_client(c_socket, c_address):
         
         broadcast(f"--- {c_name} has joined the chat ---", c_socket)
 
+        
+
         while True:
             recv_packet = c_socket.recv(1024).decode()
             
             is_valid, recv_msg = crc.verify_packet(recv_packet)
             
+            # received corrupted message from client
             if not is_valid:
-                print(f"CRC Error from {c_name}. Packet dropped.")
+                print(f"CRC Error from {c_name}.")
+                error_msg = "[CRC_ERROR]"           # notify client that the received message is corrupted
+                c_socket.send(crc.create_packet(error_msg))
                 continue
             
             print(f"{c_name} > {recv_msg}")
             
+            # client is reporting broadcast error
+            if recv_msg == "[CRC_ERROR]":
+                broadcast("[ERROR: Broadcast corrupted. Rebroadcasting...]", None, is_error_msg=True)
+                if last_broadcast_message:
+                    broadcast(last_broadcast_message, last_broadcast_sender)
+                continue
+            
             if recv_msg == "[bye]":
                 break
             
-            broadcast(f"{c_name} > {recv_msg}", c_socket)
+            broadcast_msg = f"{c_name} > {recv_msg}"
+            last_broadcast_message = broadcast_msg
+            last_broadcast_sender = c_socket
+            broadcast(broadcast_msg, c_socket)
+            
             
     except Exception as e:
         print(f"Error with client {c_address}: {e}")

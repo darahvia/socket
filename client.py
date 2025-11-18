@@ -3,6 +3,7 @@ import threading
 import crc
 import tkinter as tk
 from tkinter import scrolledtext, messagebox
+import random
 
 class Client:
     def __init__(self, window):
@@ -12,7 +13,7 @@ class Client:
         self.client = None
         self.connected = False
         self.username = ""
-        
+        self.last_message ="" # DARAH: for retransmitting corrupted messages
         self.client_ui()
         self.show_connection_screen()
 
@@ -126,10 +127,18 @@ class Client:
                 # Check packet using CRC
                 is_valid, message = crc.verify_packet(packet)
                 
-                if is_valid:
-                    self.add_message(message)
+                if is_valid:  ## DARAH: received message from the server is valid
+                    if message == "[CRC_ERROR]":        # received notification from server to retransmit
+                        self.add_message("[Retransmitting message...]", "system")
+                        # Resend last message
+                        packet = crc.create_packet(self.last_message)
+                        self.client.send(packet)
+                    else:
+                        self.add_message(message)
                 else:
-                    self.add_message("[Error: Message corrupted]", "error")
+                    # received error on broadcasted message from server
+                    error_packet = crc.create_packet("[CRC_ERROR]")
+                    self.client.send(error_packet)
                     
             except Exception as e:
                 if self.connected:
@@ -143,10 +152,19 @@ class Client:
             return
         
         try:
-            # Create CRC packet and send to server
-            packet = crc.create_packet(message)
+            if random.random() < 0.1:
+                packet = crc.create_packet(message)
+                packet_str = packet.decode()
+                # Corrupt by changing one character in CRC
+                parts = packet_str.split('|')
+                if len(parts[1]) > 0:
+                    corrupted_crc = parts[1][:-1] + ('1' if parts[1][-1] == '0' else '0')
+                    packet = (parts[0] + '|' + corrupted_crc).encode()
+            else:
+                packet = crc.create_packet(message)
             self.client.send(packet)
             
+            self.last_message = message #DARAH: for retransmitting
             self.add_message(f"You > {message}", "user")
             self.message_entry.delete(0, tk.END)
             
