@@ -28,7 +28,8 @@ def create_packet(message):
 
 def verify_packet(packet):
     try:
-        message, received_crc = packet.split('|')
+        packet_str = packet.decode()
+        message, received_crc = packet_str.split('|')
         message_ascii = ''.join(format(ord(c), '08b') for c in message)
         calculated_crc = crc_division(message_ascii)
         

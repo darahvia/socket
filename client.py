@@ -117,7 +117,7 @@ class Client:
         while self.connected:
             try:
                 # Receive packet from server
-                packet = self.client.recv(1024).decode()
+                packet = self.client.recv(1024)
                 
                 if not packet:
                     self.add_message("Disconnected from server", "system")
@@ -128,16 +128,15 @@ class Client:
                 is_valid, message = crc.verify_packet(packet)
                 
                 if is_valid:  ## DARAH: received message from the server is valid
-                    if message == "[CRC_ERROR]":        # received notification from server to retransmit
+                    if message == "[ERROR_NOTIF_FROM_SERVER]":        # received notification from server to retransmit
                         self.add_message("[Retransmitting message...]", "system")
                         # Resend last message
-                        packet = crc.create_packet(self.last_message)
-                        self.client.send(packet)
+                        self.send_message(resend=True)
                     else:
                         self.add_message(message)
                 else:
-                    # received error on broadcasted message from server
-                    error_packet = crc.create_packet("[CRC_ERROR]")
+                    # crc check failed - notify server
+                    error_packet = crc.create_packet("[ERROR_NOTIF_FROM_CLIENT]")  # notify the server
                     self.client.send(error_packet)
                     
             except Exception as e:
@@ -145,8 +144,11 @@ class Client:
                     self.add_message(f"Connection error: {e}", "error")
                 break
     
-    def send_message(self):
-        message = self.message_entry.get().strip()
+    def send_message(self, resend=False):
+        if resend: 
+            message = self.last_message
+        else:
+            message = self.message_entry.get().strip()
         
         if not message:
             return
@@ -157,17 +159,19 @@ class Client:
                 packet_str = packet.decode()
                 # Corrupt by changing one character in CRC
                 parts = packet_str.split('|')
-                if len(parts[1]) > 0:
+                if len(parts) == 2 and len(parts[1]) > 0:  # Check both parts exist
                     corrupted_crc = parts[1][:-1] + ('1' if parts[1][-1] == '0' else '0')
                     packet = (parts[0] + '|' + corrupted_crc).encode()
             else:
                 packet = crc.create_packet(message)
             self.client.send(packet)
-            
-            self.last_message = message #DARAH: for retransmitting
-            self.add_message(f"You > {message}", "user")
-            self.message_entry.delete(0, tk.END)
-            
+
+            #DARAH: update UI and last_message if this is a new message (not a resend)
+            if not resend:
+                self.last_message = message #DARAH: for retransmitting
+                self.add_message(f"You > {message}", "user")
+                self.message_entry.delete(0, tk.END)
+                
             if message == "[bye]":
                 self.window.after(500, self.disconnect)
                 
